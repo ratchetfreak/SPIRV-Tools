@@ -26,82 +26,114 @@
 namespace spvtools {
 namespace opt {
 
-bool Mem2RegPass::Process(ir::Module* module) {
-  analysis::DefUseManager def_use(module);
-  
+  struct stack_state {
+    ir::BasicBlock* blk;
 
-  bool modified = false;
-  
-  for(auto& func : *module){
-    std::unordered_set<ir::Instruction*> working_list;
-    ir::BasicBlock* startBlock = &*func.begin();
-    
-    for(auto &instruction: *startBlock){
-      if(instruction.opcode() == SpvOpVariable){
-        working_list.insert(&instruction);
-        
+    std::unordered_map<ir::Instruction*, ir::Instruction*> end_state;
+  };
+
+  ir::BasicBlock* find_block_for_id(ir::Function*func, uint32_t id) {
+    for (ir::BasicBlock& blk : *func) {
+      if (blk.begin()->result_id() == id)
+        return &blk;
+    }
+    return NULL;
+  }
+
+  void visit_blocks(analysis::DefUseManager &def_use, std::unordered_map<ir::Instruction*, ir::Instruction*> &working_list, ir::Function*func) {
+
+    std::vector<stack_state> stack;
+    stack.push_back(stack_state{ &*func->begin(),working_list });
+
+    while (!stack.empty()) {
+      stack_state &state = stack.back();
+
+      auto blk = find_block_for_id(func, 0);
+    }
+
+  }
+
+  bool Mem2RegPass::Process(ir::Module* module) {
+    analysis::DefUseManager def_use(module);
+
+
+    bool modified = false;
+
+    for (auto& func : *module) {
+      std::unordered_map<ir::Instruction*, ir::Instruction*> working_list;
+      ir::BasicBlock* startBlock = &*func.begin();
+
+      for (auto &instruction : *startBlock) {
+        if (instruction.opcode() == SpvOpVariable) {
+          working_list.insert(std::make_pair<ir::Instruction*, ir::Instruction*>(&instruction, 0));
+
         repeat_from_scratch:
 
-        bool loaded = false;
-        bool gepped = false;
-        bool passedToFunc = false;
-        bool storedCount = 0;
-        
-        analysis::UseList* uselist = def_use.GetUses(instruction.result_id());
+          std::unordered_set<ir::Instruction*> geps;
+          bool loaded = false;
+          bool passedToFunc = false;
+          bool storedCount = 0;
 
-        for(auto& use: *uselist){
-          switch(use.inst->opcode()){
+          analysis::UseList* uselist = def_use.GetUses(instruction.result_id());
+
+          for (auto& use : *uselist) {
+            switch (use.inst->opcode()) {
             case SpvOpAccessChain:
-            case SpvOpInBoundsAccessChain:{
-                gepped = true;
+            case SpvOpInBoundsAccessChain: {
+              geps.insert(use.inst);
             }break;
             case SpvOpCopyMemory: {
-                if (use.operand_index == 0) storedCount++;
-                if (use.operand_index == 1) loaded = true;
+              if (use.operand_index == 0) storedCount++;
+              if (use.operand_index == 1) loaded = true;
             }break;
             case SpvOpCopyObject: {
-                def_use.ReplaceAllUsesWith(use.inst->result_id(), instruction.result_id());
-                def_use.KillInst(use.inst);
+              def_use.ReplaceAllUsesWith(use.inst->result_id(), instruction.result_id());
+              def_use.KillInst(use.inst);
+              modified = true;
 
-                //iterator we are using just changed, have to break out
-                goto repeat_from_scratch;
+              //iterator we are using just changed, have to break out
+              goto repeat_from_scratch;
             }break;
-            case SpvOpPhi:{
-                //not legal but bail anyway
-                passedToFunc = true;
+            case SpvOpPhi: {
+              //not legal but bail anyway
+              passedToFunc = true;
             }break;
-            case SpvOpFunctionCall: 
-            case SpvOpExtInst:{
-                //passed to function/extension function not much to do...
-                passedToFunc = true;
+            case SpvOpFunctionCall:
+            case SpvOpExtInst: {
+              //passed to function/extension function not much to do...
+              passedToFunc = true;
             }break;
 
             default: {
-                //some unkown use ... bail out
-                passedToFunc = true;
+              //some unkown use ... bail out
+              passedToFunc = true;
             }break;
+            }
           }
-        }
 
-        if (!loaded) {
+          //can't remove variable when used as parameter.
+          if (passedToFunc)break;
+          //TODO(ratchet freak): try and optimize loads and stores from/to it
+
+          if (!loaded && geps.empty()) {
+            //never loaded from -> can kill all stores
             for (auto& use : *uselist) {
+              if (use.inst->type_id())
                 def_use.KillInst(use.inst);
             }
             working_list.erase(working_list.find(&instruction));
             def_use.KillInst(&instruction);
+            modified = true;
+          }
+
+          visit_blocks(def_use, working_list, &func);
+
         }
-        
-        //can't remove variable when used as parameter.
-        if(passedToFunc)break;
       }
     }
-    
-    
-    
+
+    return modified;
   }
-  
-  return modified;
-}
 
 }  // namespace opt
 }  // namespace spvtools

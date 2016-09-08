@@ -32,6 +32,7 @@ add_library(SPIRV-Tools-opt
   types.h
   type_manager.h
   unify_const_pass.h
+  var2reg_pass.h
 
   def_use_manager.cpp
   eliminate_dead_constant_pass.cpp
@@ -46,6 +47,7 @@ add_library(SPIRV-Tools-opt
   types.cpp
   type_manager.cpp
   unify_const_pass.cpp
+  var2reg_pass.cpp
 )
 
 spvtools_default_compile_options(SPIRV-Tools-opt)

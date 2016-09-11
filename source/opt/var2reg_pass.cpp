@@ -32,7 +32,7 @@ namespace opt {
 
     std::unordered_map<ir::Instruction*, ir::Instruction*> end_state;
     std::unordered_set<ir::Instruction*> live;
-    std::vector<ir::Instruction*> preds;
+    std::vector<ir::BasicBlock*> preds;
 
 
     stack_state(ir::BasicBlock* blk) : blk(blk), end_state(), preds(), live() {}
@@ -50,6 +50,16 @@ namespace opt {
         return &blk;
     }
     return NULL;
+  }
+
+  ir::BasicBlock* find_block_with(ir::Function* func, ir::Instruction* inst) {
+
+    for (auto&blk : *func) {
+      for (auto&i : blk) {
+        if (i.result_id() == inst->result_id())return &blk;
+      }
+    }
+    return nullptr;
   }
 
   void visit_blocks(analysis::DefUseManager &def_use, std::unordered_set<ir::Instruction*> &working_list, ir::Function*func) {
@@ -70,8 +80,8 @@ namespace opt {
       auto preds = def_use.GetUses(blk.begin()->result_id());
       if (preds) {
         for (auto p : *preds) {
-          //p.inst->
-          //curr.preds.push_back(...);
+          auto pred_block = find_block_with(func, p.inst);
+          curr.preds.push_back(pred_block);
         }
       }
 

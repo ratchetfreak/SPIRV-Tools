@@ -22,6 +22,7 @@
 #include "spirv/1.1/spirv.h"
 
 #include <unordered_set>
+#include <set>
 
 namespace spvtools {
 namespace opt {
@@ -30,6 +31,17 @@ namespace opt {
     ir::BasicBlock* blk;
 
     std::unordered_map<ir::Instruction*, ir::Instruction*> end_state;
+    std::unordered_set<ir::Instruction*> live;
+    std::vector<ir::Instruction*> preds;
+
+
+    stack_state(ir::BasicBlock* blk) : blk(blk), end_state(), preds(), live() {}
+  };
+
+  struct instr_state {
+    ir::Instruction* instr;
+
+    std::vector<int> access_chain;
   };
 
   ir::BasicBlock* find_block_for_id(ir::Function*func, uint32_t id) {
@@ -40,15 +52,30 @@ namespace opt {
     return NULL;
   }
 
-  void visit_blocks(analysis::DefUseManager &def_use, std::unordered_map<ir::Instruction*, ir::Instruction*> &working_list, ir::Function*func) {
+  void visit_blocks(analysis::DefUseManager &def_use, std::unordered_set<ir::Instruction*> &working_list, ir::Function*func) {
 
     std::vector<stack_state> stack;
-    stack.push_back(stack_state{ &*func->begin(),working_list });
+    static auto l = [](instr_state& a, instr_state& b) {return std::less<>()(a.instr->result_id(), b.instr->result_id()); };
+    std::set < instr_state, decltype(l)> intructions(l);
 
-    while (!stack.empty()) {
-      stack_state &state = stack.back();
+    for (auto&blk : *func) {
 
-      auto blk = find_block_for_id(func, 0);
+      auto it = std::_Find_pr<>(stack.begin(), stack.end(), &blk, [](stack_state a, ir::BasicBlock* b) {return a.blk == b; });
+      if (it == stack.end()) {
+       stack.emplace_back(&blk);
+       it = stack.end()-1;
+      }
+      auto& curr = *it;
+
+      auto preds = def_use.GetUses(blk.begin()->result_id());
+      if (preds) {
+        for (auto p : *preds) {
+          //p.inst->
+          //curr.preds.push_back(...);
+        }
+      }
+
+
     }
 
   }
@@ -60,12 +87,12 @@ namespace opt {
     bool modified = false;
 
     for (auto& func : *module) {
-      std::unordered_map<ir::Instruction*, ir::Instruction*> working_list;
+      std::unordered_set<ir::Instruction*> working_list;
       ir::BasicBlock* startBlock = &*func.begin();
 
       for (auto &instruction : *startBlock) {
         if (instruction.opcode() == SpvOpVariable) {
-          working_list.insert(std::make_pair<ir::Instruction*, ir::Instruction*>(&instruction, 0));
+          working_list.insert(&instruction);
 
         repeat_from_scratch:
 

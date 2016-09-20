@@ -22,6 +22,7 @@
 
 #include "diagnostic.h"
 #include "instruction.h"
+#include "message.h"
 #include "spirv-tools/libspirv.h"
 #include "text.h"
 
@@ -116,11 +117,8 @@ class ClampToZeroIfUnsignedType<
 // Encapsulates the data used during the assembly of a SPIR-V module.
 class AssemblyContext {
  public:
-  AssemblyContext(spv_text text, spv_diagnostic* diagnostic_arg)
-      : current_position_({}),
-        pDiagnostic_(diagnostic_arg),
-        text_(text),
-        bound_(1) {}
+  AssemblyContext(spv_text text, const spvtools::MessageConsumer& consumer)
+      : current_position_({}), consumer_(consumer), text_(text), bound_(1) {}
 
   // Assigns a new integer value to the given text ID, or returns the previously
   // assigned integer value if the ID has been seen before.
@@ -148,7 +146,7 @@ class AssemblyContext {
   // stream, and for the given error code. Any data written to this object will
   // show up in pDiagnsotic on destruction.
   DiagnosticStream diagnostic(spv_result_t error) {
-    return DiagnosticStream(current_position_, pDiagnostic_, error);
+    return DiagnosticStream(current_position_, consumer_, error);
   }
 
   // Returns a diagnostic object with the default assembly error code.
@@ -226,68 +224,7 @@ class AssemblyContext {
   // id is not the id for an extended instruction type.
   spv_ext_inst_type_t getExtInstTypeForId(uint32_t id) const;
 
-  // Parses a numeric value of a given type from the given text.  The number
-  // should take up the entire string, and should be within bounds for the
-  // target type.  On success, returns SPV_SUCCESS and populates the object
-  // referenced by value_pointer. On failure, returns the given error code,
-  // and emits a diagnostic if that error code is not SPV_FAILED_MATCH.
-  template <typename T>
-  spv_result_t parseNumber(const char* text, spv_result_t error_code,
-                           T* value_pointer,
-                           const char* error_message_fragment) {
-    // C++11 doesn't define std::istringstream(int8_t&), so calling this method
-    // with a single-byte type leads to implementation-defined behaviour.
-    // Similarly for uint8_t.
-    static_assert(sizeof(T) > 1,
-                  "Don't use a single-byte type this parse method");
-
-    std::istringstream text_stream(text);
-    // Allow both decimal and hex input for integers.
-    // It also allows octal input, but we don't care about that case.
-    text_stream >> std::setbase(0);
-    text_stream >> *value_pointer;
-
-    // We should have read something.
-    bool ok = (text[0] != 0) && !text_stream.bad();
-    // It should have been all the text.
-    ok = ok && text_stream.eof();
-    // It should have been in range.
-    ok = ok && !text_stream.fail();
-
-    // Work around a bug in the GNU C++11 library. It will happily parse
-    // "-1" for uint16_t as 65535.
-    if (ok && text[0] == '-')
-      ok = !ClampToZeroIfUnsignedType<T>::Clamp(value_pointer);
-
-    if (ok) return SPV_SUCCESS;
-    return diagnostic(error_code) << error_message_fragment << text;
-  }
-
  private:
-
-  // Appends the given floating point literal to the given instruction.
-  // Returns SPV_SUCCESS if the value was correctly parsed.  Otherwise
-  // returns the given error code, and emits a diagnostic if that error
-  // code is not SPV_FAILED_MATCH.
-  // Only 32 and 64 bit floating point numbers are supported.
-  spv_result_t binaryEncodeFloatingPointLiteral(const char* numeric_literal,
-                                                spv_result_t error_code,
-                                                const IdType& type,
-                                                spv_instruction_t* pInst);
-
-  // Appends the given integer literal to the given instruction.
-  // Returns SPV_SUCCESS if the value was correctly parsed.  Otherwise
-  // returns the given error code, and emits a diagnostic if that error
-  // code is not SPV_FAILED_MATCH.
-  // Integers up to 64 bits are supported.
-  spv_result_t binaryEncodeIntegerLiteral(const char* numeric_literal,
-                                          spv_result_t error_code,
-                                          const IdType& type,
-                                          spv_instruction_t* pInst);
-
-  // Writes the given 64-bit literal value into the instruction.
-  // return SPV_SUCCESS if the value could be written in the instruction.
-  spv_result_t binaryEncodeU64(const uint64_t value, spv_instruction_t* pInst);
   // Maps ID names to their corresponding numerical ids.
   using spv_named_id_table = std::unordered_map<std::string, uint32_t>;
   // Maps type-defining IDs to their IdType.
@@ -301,7 +238,7 @@ class AssemblyContext {
   // Maps an extended instruction import Id to the extended instruction type.
   std::unordered_map<uint32_t, spv_ext_inst_type_t> import_id_to_ext_inst_type_;
   spv_position_t current_position_;
-  spv_diagnostic* pDiagnostic_;
+  spvtools::MessageConsumer consumer_;
   spv_text text_;
   uint32_t bound_;
 };

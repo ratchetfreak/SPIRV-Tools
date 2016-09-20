@@ -19,48 +19,65 @@
 #include <string>
 #include <vector>
 
-#include "module.h"
+#include "message.h"
 #include "spirv-tools/libspirv.h"
 
 namespace spvtools {
 
 // C++ interface for SPIRV-Tools functionalities. It wraps the context
 // (including target environment and the corresponding SPIR-V grammar) and
-// provides methods for assembling, disassembling, validating, and optimizing.
+// provides methods for assembling, disassembling, and validating.
 //
-// Instances of this class are thread-safe.
+// Instances of this class provide basic thread-safety guarantee.
 class SpvTools {
  public:
-  // Creates an instance targeting the given environment |env|.
-  SpvTools(spv_target_env env) : context_(spvContextCreate(env)) {}
+  enum {
+    // Default disassembling option used by Disassemble():
+    // * Avoid prefix comments from decoding the SPIR-V module header, and
+    // * Use friendly names for variables.
+    kDefaultDisassembleOption = SPV_BINARY_TO_TEXT_OPTION_NO_HEADER |
+                                SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES
+  };
 
-  ~SpvTools() { spvContextDestroy(context_); }
+  // Constructs an instance targeting the given environment |env|.
+  //
+  // The constructed instance will have an empty message consumer, which just
+  // ignores all messages from the library. Use SetMessageConsumer() to supply
+  // one if messages are of concern.
+  explicit SpvTools(spv_target_env env);
 
-  // TODO(antiagainst): handle error message in the following APIs.
+  // Disables copy/move constructor/assignment operations.
+  SpvTools(const SpvTools&) = delete;
+  SpvTools(SpvTools&&) = delete;
+  SpvTools& operator=(const SpvTools&) = delete;
+  SpvTools& operator=(SpvTools&&) = delete;
+
+  // Destructs this instance.
+  ~SpvTools();
+
+  // Sets the message consumer to the given |consumer|. The |consumer| will be
+  // invoked once for each message communicated from the library.
+  void SetMessageConsumer(MessageConsumer consumer);
 
   // Assembles the given assembly |text| and writes the result to |binary|.
-  // Returns SPV_SUCCESS on successful assembling.
-  spv_result_t Assemble(const std::string& text, std::vector<uint32_t>* binary);
+  // Returns true on successful assembling. |binary| will be kept untouched if
+  // assembling is unsuccessful.
+  bool Assemble(const std::string& text, std::vector<uint32_t>* binary) const;
 
-  // Disassembles the given SPIR-V |binary| with the given options and returns
-  // the assembly. By default the options are set to generate assembly with
-  // friendly variable names and no SPIR-V assembly header. Returns SPV_SUCCESS
-  // on successful disassembling.
-  spv_result_t Disassemble(
-      const std::vector<uint32_t>& binary, std::string* text,
-      uint32_t options = SPV_BINARY_TO_TEXT_OPTION_NO_HEADER |
-                         SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES);
+  // Disassembles the given SPIR-V |binary| with the given |options| and writes
+  // the assembly to |text|. Returns ture on successful disassembling. |text|
+  // will be kept untouched if diassembling is unsuccessful.
+  bool Disassemble(const std::vector<uint32_t>& binary, std::string* text,
+                   uint32_t options = kDefaultDisassembleOption) const;
 
-  // Builds and returns a Module from the given SPIR-V |binary|.
-  std::unique_ptr<ir::Module> BuildModule(const std::vector<uint32_t>& binary);
-
-  // Builds and returns a Module from the given SPIR-V assembly |text|.
-  std::unique_ptr<ir::Module> BuildModule(const std::string& text);
+  // Validates the given SPIR-V |binary|. Returns true if no issues are found.
+  // Otherwise, returns false and communicates issues via the message consumer
+  // registered.
+  bool Validate(const std::vector<uint32_t>& binary) const;
 
  private:
-  // Context for the current invocation. Thread-safety of this class depends on
-  // the constness of this field.
-  spv_context context_;
+  struct Impl;  // Opaque struct for holding the data fields used by this class.
+  std::unique_ptr<Impl> impl_;  // Unique pointer to implementation data.
 };
 
 }  // namespace spvtools

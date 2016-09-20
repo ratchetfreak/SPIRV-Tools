@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 
+#include "opt/build_module.h"
 #include "opt/libspirv.hpp"
 
 namespace {
@@ -23,14 +24,15 @@ using namespace spvtools;
 
 void DoRoundTripCheck(const std::string& text) {
   SpvTools t(SPV_ENV_UNIVERSAL_1_1);
-  std::unique_ptr<ir::Module> module = t.BuildModule(text);
+  std::unique_ptr<ir::Module> module =
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, text);
   ASSERT_NE(nullptr, module) << "Failed to assemble\n" << text;
 
   std::vector<uint32_t> binary;
   module->ToBinary(&binary, /* skip_nop = */ false);
 
   std::string disassembled_text;
-  EXPECT_EQ(SPV_SUCCESS, t.Disassemble(binary, &disassembled_text));
+  EXPECT_TRUE(t.Disassemble(binary, &disassembled_text));
   EXPECT_EQ(text, disassembled_text);
 }
 
@@ -209,7 +211,8 @@ TEST(IrBuilder, OpUndefOutsideFunction) {
   // clang-format on
 
   SpvTools t(SPV_ENV_UNIVERSAL_1_1);
-  std::unique_ptr<ir::Module> module = t.BuildModule(text);
+  std::unique_ptr<ir::Module> module =
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, text);
   ASSERT_NE(nullptr, module);
 
   const auto opundef_count = std::count_if(
@@ -221,7 +224,7 @@ TEST(IrBuilder, OpUndefOutsideFunction) {
   module->ToBinary(&binary, /* skip_nop = */ false);
 
   std::string disassembled_text;
-  EXPECT_EQ(SPV_SUCCESS, t.Disassemble(binary, &disassembled_text));
+  EXPECT_TRUE(t.Disassemble(binary, &disassembled_text));
   EXPECT_EQ(text, disassembled_text);
 }
 

@@ -15,12 +15,14 @@
 #ifndef LIBSPIRV_TEST_OPT_PASS_FIXTURE_H_
 #define LIBSPIRV_TEST_OPT_PASS_FIXTURE_H_
 
+#include <iostream>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "opt/build_module.h"
 #include "opt/libspirv.hpp"
 #include "opt/make_unique.h"
 #include "opt/pass_manager.h"
@@ -39,14 +41,17 @@ template <typename TestT>
 class PassTest : public TestT {
  public:
   PassTest()
-      : tools_(SPV_ENV_UNIVERSAL_1_1), manager_(new opt::PassManager()) {}
+      : consumer_(IgnoreMessage),
+        tools_(SPV_ENV_UNIVERSAL_1_1),
+        manager_(new opt::PassManager(consumer_)) {}
 
   // Runs the given |pass| on the binary assembled from the |assembly|, and
   // disassebles the optimized binary. Returns a tuple of disassembly string
   // and the boolean value returned from pass Process() function.
   std::tuple<std::string, bool> OptimizeAndDisassemble(
       opt::Pass* pass, const std::string& original, bool skip_nop) {
-    std::unique_ptr<ir::Module> module = tools_.BuildModule(original);
+    std::unique_ptr<ir::Module> module =
+        BuildModule(SPV_ENV_UNIVERSAL_1_1, consumer_, original);
     EXPECT_NE(nullptr, module) << "Assembling failed for shader:\n"
                                << original << std::endl;
     if (!module) {
@@ -58,7 +63,7 @@ class PassTest : public TestT {
     std::vector<uint32_t> binary;
     module->ToBinary(&binary, skip_nop);
     std::string optimized;
-    EXPECT_EQ(SPV_SUCCESS, tools_.Disassemble(binary, &optimized))
+    EXPECT_TRUE(tools_.Disassemble(binary, &optimized))
         << "Disassembling failed for shader:\n"
         << original << std::endl;
     return std::make_tuple(optimized, modified);
@@ -70,7 +75,7 @@ class PassTest : public TestT {
   template <typename PassT, typename... Args>
   std::tuple<std::string, bool> SinglePassRunAndDisassemble(
       const std::string& assembly, bool skip_nop, Args&&... args) {
-    auto pass = MakeUnique<PassT>(std::forward<Args>(args)...);
+    auto pass = MakeUnique<PassT>(consumer_, std::forward<Args>(args)...);
     return OptimizeAndDisassemble(pass.get(), assembly, skip_nop);
   }
 
@@ -98,7 +103,7 @@ class PassTest : public TestT {
   }
 
   // Renews the pass manager, including clearing all previously added passes.
-  void RenewPassManger() { manager_.reset(new opt::PassManager()); }
+  void RenewPassManger() { manager_.reset(new opt::PassManager(consumer_)); }
 
   // Runs the passes added thus far using a pass manager on the binary assembled
   // from the |original| assembly, and checks whether the optimized binary can
@@ -107,7 +112,8 @@ class PassTest : public TestT {
   void RunAndCheck(const std::string& original, const std::string& expected) {
     assert(manager_->NumPasses());
 
-    std::unique_ptr<ir::Module> module = tools_.BuildModule(original);
+    std::unique_ptr<ir::Module> module =
+        BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, original);
     ASSERT_NE(nullptr, module);
 
     manager_->Run(module.get());
@@ -116,11 +122,12 @@ class PassTest : public TestT {
     module->ToBinary(&binary, /* skip_nop = */ false);
 
     std::string optimized;
-    EXPECT_EQ(SPV_SUCCESS, tools_.Disassemble(binary, &optimized));
+    EXPECT_TRUE(tools_.Disassemble(binary, &optimized));
     EXPECT_EQ(expected, optimized);
   }
 
  private:
+  MessageConsumer consumer_;  // Message consumer.
   SpvTools tools_;  // An instance for calling SPIRV-Tools functionalities.
   std::unique_ptr<opt::PassManager> manager_;  // The pass manager.
 };

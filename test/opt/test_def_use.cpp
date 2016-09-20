@@ -18,6 +18,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "opt/build_module.h"
 #include "opt/def_use_manager.h"
 #include "opt/libspirv.hpp"
 #include "pass_utils.h"
@@ -128,11 +129,11 @@ TEST_P(ParseDefUseTest, Case) {
   // Build module.
   const std::vector<const char*> text = {tc.text};
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(JoinAllInsts(text));
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, JoinAllInsts(text));
   ASSERT_NE(nullptr, module);
 
   // Analyze def and use.
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
 
   CheckDef(tc.du, manager.id_to_defs());
   CheckUse(tc.du, manager.id_to_uses());
@@ -509,11 +510,11 @@ TEST_P(ReplaceUseTest, Case) {
   // Build module.
   const std::vector<const char*> text = {tc.before};
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(JoinAllInsts(text));
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, JoinAllInsts(text));
   ASSERT_NE(nullptr, module);
 
   // Analyze def and use.
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
 
   // Do the substitution.
   for (const auto& candiate : tc.candidates) {
@@ -811,11 +812,11 @@ TEST_P(KillDefTest, Case) {
   // Build module.
   const std::vector<const char*> text = {tc.before};
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(JoinAllInsts(text));
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, JoinAllInsts(text));
   ASSERT_NE(nullptr, module);
 
   // Analyze def and use.
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
 
   // Do the substitution.
   for (const auto id : tc.ids_to_kill) manager.KillDef(id);
@@ -1061,11 +1062,11 @@ TEST(DefUseTest, OpSwitch) {
       "      OpFunctionEnd";
 
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(original_text);
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, original_text);
   ASSERT_NE(nullptr, module);
 
   // Analyze def and use.
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
 
   // Do a bunch replacements.
   manager.ReplaceAllUsesWith(9, 900);    // to unused id
@@ -1184,11 +1185,11 @@ TEST_P(AnalyzeInstDefUseTest, Case) {
 
   // Build module.
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(tc.module_text);
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, tc.module_text);
   ASSERT_NE(nullptr, module);
 
   // Analyze the instructions.
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
   for (ir::Instruction& inst : tc.insts) {
     manager.AnalyzeInstDefUse(&inst);
   }
@@ -1307,12 +1308,12 @@ TEST_P(KillInstTest, Case) {
 
   // Build module.
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(tc.before);
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, tc.before);
   ASSERT_NE(nullptr, module);
 
   // KillInst
   uint32_t index = 0;
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
   module->ForEachInst([&index, &tc, &manager](ir::Instruction* inst) {
     if (tc.indices_for_inst_to_kill.count(index) != 0) {
       manager.KillInst(inst);
@@ -1415,11 +1416,11 @@ TEST_P(GetAnnotationsTest, Case) {
 
   // Build module.
   std::unique_ptr<ir::Module> module =
-      SpvTools(SPV_ENV_UNIVERSAL_1_1).BuildModule(tc.code);
+      BuildModule(SPV_ENV_UNIVERSAL_1_1, IgnoreMessage, tc.code);
   ASSERT_NE(nullptr, module);
 
   // Get annotations
-  opt::analysis::DefUseManager manager(module.get());
+  opt::analysis::DefUseManager manager(IgnoreMessage, module.get());
   auto insts = manager.GetAnnotations(tc.id);
 
   // Check

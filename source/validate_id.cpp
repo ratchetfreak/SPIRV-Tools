@@ -24,6 +24,7 @@
 
 #include "diagnostic.h"
 #include "instruction.h"
+#include "message.h"
 #include "opcode.h"
 #include "spirv-tools/libspirv.h"
 #include "val/Function.h"
@@ -48,7 +49,7 @@ class idUsage {
           const SpvMemoryModel memoryModelArg,
           const SpvAddressingModel addressingModelArg,
           const ValidationState_t& module, const vector<uint32_t>& entry_points,
-          spv_position positionArg, spv_diagnostic* pDiagnosticArg)
+          spv_position positionArg, const spvtools::MessageConsumer& consumer)
       : opcodeTable(opcodeTableArg),
         operandTable(operandTableArg),
         extInstTable(extInstTableArg),
@@ -57,7 +58,7 @@ class idUsage {
         memoryModel(memoryModelArg),
         addressingModel(addressingModelArg),
         position(positionArg),
-        pDiagnostic(pDiagnosticArg),
+        consumer_(consumer),
         module_(module),
         entry_points_(entry_points) {}
 
@@ -75,14 +76,14 @@ class idUsage {
   const SpvMemoryModel memoryModel;
   const SpvAddressingModel addressingModel;
   spv_position position;
-  spv_diagnostic* pDiagnostic;
+  const spvtools::MessageConsumer& consumer_;
   const ValidationState_t& module_;
   vector<uint32_t> entry_points_;
 };
 
 #define DIAG(INDEX)                                                \
   position->index += INDEX;                                        \
-  libspirv::DiagnosticStream helper(*position, pDiagnostic,        \
+  libspirv::DiagnosticStream helper(*position, consumer_,          \
                                     SPV_ERROR_INVALID_DIAGNOSTIC); \
   helper
 
@@ -464,10 +465,11 @@ bool idUsage::isValid<SpvOpConstantComposite>(const spv_instruction_t* inst,
       for (size_t constituentIndex = 3; constituentIndex < inst->words.size();
            constituentIndex++) {
         auto constituent = module_.FindDef(inst->words[constituentIndex]);
-        if (!constituent || !spvOpcodeIsConstant(constituent->opcode())) {
+        if (!constituent ||
+            !spvOpcodeIsConstantOrUndef(constituent->opcode())) {
           DIAG(constituentIndex) << "OpConstantComposite Constituent <id> '"
                                  << inst->words[constituentIndex]
-                                 << "' is not a constant.";
+                                 << "' is not a constant or undef.";
           return false;
         }
         auto constituentResultType = module_.FindDef(constituent->type_id());
@@ -502,10 +504,14 @@ bool idUsage::isValid<SpvOpConstantComposite>(const spv_instruction_t* inst,
       for (size_t constituentIndex = 3; constituentIndex < inst->words.size();
            constituentIndex++) {
         auto constituent = module_.FindDef(inst->words[constituentIndex]);
-        if (!constituent || SpvOpConstantComposite != constituent->opcode()) {
+        if (!constituent ||
+            !(SpvOpConstantComposite == constituent->opcode() ||
+              SpvOpUndef == constituent->opcode())) {
+          // The message says "... or undef" because the spec does not say
+          // undef is a constant.
           DIAG(constituentIndex) << "OpConstantComposite Constituent <id> '"
                                  << inst->words[constituentIndex]
-                                 << "' is not a constant composite.";
+                                 << "' is not a constant composite or undef.";
           return false;
         }
         auto vector = module_.FindDef(constituent->type_id());
@@ -553,10 +559,11 @@ bool idUsage::isValid<SpvOpConstantComposite>(const spv_instruction_t* inst,
       for (size_t constituentIndex = 3; constituentIndex < inst->words.size();
            constituentIndex++) {
         auto constituent = module_.FindDef(inst->words[constituentIndex]);
-        if (!constituent || !spvOpcodeIsConstant(constituent->opcode())) {
+        if (!constituent ||
+            !spvOpcodeIsConstantOrUndef(constituent->opcode())) {
           DIAG(constituentIndex) << "OpConstantComposite Constituent <id> '"
                                  << inst->words[constituentIndex]
-                                 << "' is not a constant.";
+                                 << "' is not a constant or undef.";
           return false;
         }
         auto constituentType = module_.FindDef(constituent->type_id());
@@ -584,10 +591,10 @@ bool idUsage::isValid<SpvOpConstantComposite>(const spv_instruction_t* inst,
            constituentIndex < inst->words.size();
            constituentIndex++, memberIndex++) {
         auto constituent = module_.FindDef(inst->words[constituentIndex]);
-        if (!constituent || !spvOpcodeIsConstant(constituent->opcode())) {
+        if (!constituent || !spvOpcodeIsConstantOrUndef(constituent->opcode())) {
           DIAG(constituentIndex) << "OpConstantComposite Constituent <id> '"
                                  << inst->words[constituentIndex]
-                                 << "' is not a constant.";
+                                 << "' is not a constant or undef.";
           return false;
         }
         auto constituentType = module_.FindDef(constituent->type_id());
@@ -2352,6 +2359,7 @@ function<bool(unsigned)> getCanBeForwardDeclaredFunction(SpvOp opcode) {
       break;
 
     case SpvOpFunctionCall:
+      // The Function parameter.
       out = [](unsigned index) { return index == 2; };
       break;
 
@@ -2360,16 +2368,19 @@ function<bool(unsigned)> getCanBeForwardDeclaredFunction(SpvOp opcode) {
       break;
 
     case SpvOpEnqueueKernel:
+      // The Invoke parameter.
       out = [](unsigned index) { return index == 8; };
       break;
 
     case SpvOpGetKernelNDrangeSubGroupCount:
     case SpvOpGetKernelNDrangeMaxSubGroupSize:
+      // The Invoke parameter.
       out = [](unsigned index) { return index == 3; };
       break;
 
     case SpvOpGetKernelWorkGroupSize:
     case SpvOpGetKernelPreferredWorkGroupSizeMultiple:
+      // The Invoke parameter.
       out = [](unsigned index) { return index == 2; };
       break;
 
@@ -2479,31 +2490,45 @@ spv_result_t IdPass(ValidationState_t& _,
   auto can_have_forward_declared_ids =
       getCanBeForwardDeclaredFunction(static_cast<SpvOp>(inst->opcode));
 
+  // Keep track of a result id defined by this instruction.  0 means it
+  // does not define an id.
+  uint32_t result_id = 0;
+
   for (unsigned i = 0; i < inst->num_operands; i++) {
     const spv_parsed_operand_t& operand = inst->operands[i];
     const spv_operand_type_t& type = operand.type;
-    const uint32_t* operand_ptr = inst->words + operand.offset;
+    // We only care about Id operands, which are a single word.
+    const uint32_t operand_word = inst->words[operand.offset];
 
     auto ret = SPV_ERROR_INTERNAL;
     switch (type) {
       case SPV_OPERAND_TYPE_RESULT_ID:
-        // NOTE: Multiple Id definitions are being checked by the binary parser
-        // NOTE: result Id is added *after* all of the other Ids have been
-        // checked to avoid premature use in the same instruction
-        _.RemoveIfForwardDeclared(*operand_ptr);
+        // NOTE: Multiple Id definitions are being checked by the binary parser.
+        //
+        // Defer undefined-forward-reference removal until after we've analyzed
+        // the remaining operands to this instruction.  Deferral only matters
+        // for
+        // OpPhi since it's the only case where it defines its own forward
+        // reference.  Other instructions that can have forward references
+        // either don't define a value or the forward reference is to a function
+        // Id (and hence defined outside of a function body).
+        result_id = operand_word;
+        // NOTE: The result Id is added (in RegisterInstruction) *after* all of
+        // the other Ids have been checked to avoid premature use in the same
+        // instruction.
         ret = SPV_SUCCESS;
         break;
       case SPV_OPERAND_TYPE_ID:
       case SPV_OPERAND_TYPE_TYPE_ID:
       case SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID:
       case SPV_OPERAND_TYPE_SCOPE_ID:
-        if (_.IsDefinedId(*operand_ptr)) {
+        if (_.IsDefinedId(operand_word)) {
           ret = SPV_SUCCESS;
         } else if (can_have_forward_declared_ids(i)) {
-          ret = _.ForwardDeclareId(*operand_ptr);
+          ret = _.ForwardDeclareId(operand_word);
         } else {
           ret = _.diag(SPV_ERROR_INVALID_ID) << "ID "
-                                             << _.getIdName(*operand_ptr)
+                                             << _.getIdName(operand_word)
                                              << " has not been defined";
         }
         break;
@@ -2514,6 +2539,9 @@ spv_result_t IdPass(ValidationState_t& _,
     if (SPV_SUCCESS != ret) {
       return ret;
     }
+  }
+  if (result_id) {
+    _.RemoveIfForwardDeclared(result_id);
   }
   _.RegisterInstruction(*inst);
   return SPV_SUCCESS;
@@ -2526,11 +2554,10 @@ spv_result_t spvValidateInstructionIDs(const spv_instruction_t* pInsts,
                                        const spv_operand_table operandTable,
                                        const spv_ext_inst_table extInstTable,
                                        const libspirv::ValidationState_t& state,
-                                       spv_position position,
-                                       spv_diagnostic* pDiag) {
+                                       spv_position position) {
   idUsage idUsage(opcodeTable, operandTable, extInstTable, pInsts, instCount,
                   state.memory_model(), state.addressing_model(), state,
-                  state.entry_points(), position, pDiag);
+                  state.entry_points(), position, state.context()->consumer);
   for (uint64_t instIndex = 0; instIndex < instCount; ++instIndex) {
     if (!idUsage.isValid(&pInsts[instIndex])) return SPV_ERROR_INVALID_ID;
     position->index += pInsts[instIndex].words.size();

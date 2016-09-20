@@ -50,15 +50,17 @@ using libspirv::ModuleLayoutPass;
 using libspirv::IdPass;
 using libspirv::ValidationState_t;
 
-spv_result_t spvValidateIDs(
-    const spv_instruction_t* pInsts, const uint64_t count,
-    const spv_opcode_table opcodeTable, const spv_operand_table operandTable,
-    const spv_ext_inst_table extInstTable, const ValidationState_t& state,
-    spv_position position, spv_diagnostic* pDiagnostic) {
+spv_result_t spvValidateIDs(const spv_instruction_t* pInsts,
+                            const uint64_t count,
+                            const spv_opcode_table opcodeTable,
+                            const spv_operand_table operandTable,
+                            const spv_ext_inst_table extInstTable,
+                            const ValidationState_t& state,
+                            spv_position position) {
   position->index = SPV_INDEX_INSTRUCTION;
   if (auto error =
           spvValidateInstructionIDs(pInsts, count, opcodeTable, operandTable,
-                                    extInstTable, state, position, pDiagnostic))
+                                    extInstTable, state, position))
     return error;
   return SPV_SUCCESS;
 }
@@ -175,29 +177,40 @@ UNUSED(void PrintDotGraph(ValidationState_t& _, libspirv::Function func)) {
 spv_result_t spvValidate(const spv_const_context context,
                          const spv_const_binary binary,
                          spv_diagnostic* pDiagnostic) {
-  if (!pDiagnostic) return SPV_ERROR_INVALID_DIAGNOSTIC;
+  return spvValidateBinary(context, binary->code, binary->wordCount,
+                           pDiagnostic);
+}
+spv_result_t spvValidateBinary(const spv_const_context context,
+                               const uint32_t* words, const size_t num_words,
+                               spv_diagnostic* pDiagnostic) {
+  spv_context_t hijack_context = *context;
+
+  spv_const_binary binary = new spv_const_binary_t{words, num_words};
+  if (pDiagnostic) {
+    *pDiagnostic = nullptr;
+    libspirv::UseDiagnosticAsMessageConsumer(&hijack_context, pDiagnostic);
+  }
 
   spv_endianness_t endian;
   spv_position_t position = {};
   if (spvBinaryEndianness(binary, &endian)) {
-    return libspirv::DiagnosticStream(position, pDiagnostic,
+    return libspirv::DiagnosticStream(position, hijack_context.consumer,
                                       SPV_ERROR_INVALID_BINARY)
            << "Invalid SPIR-V magic number.";
   }
 
   spv_header_t header;
   if (spvBinaryHeaderGet(binary, endian, &header)) {
-    return libspirv::DiagnosticStream(position, pDiagnostic,
+    return libspirv::DiagnosticStream(position, hijack_context.consumer,
                                       SPV_ERROR_INVALID_BINARY)
            << "Invalid SPIR-V header.";
   }
 
   // NOTE: Parse the module and perform inline validation checks. These
   // checks do not require the the knowledge of the whole module.
-  ValidationState_t vstate(pDiagnostic, context);
-  if (auto error =
-          spvBinaryParse(context, &vstate, binary->code, binary->wordCount,
-                         setHeader, ProcessInstruction, pDiagnostic))
+  ValidationState_t vstate(&hijack_context);
+  if (auto error = spvBinaryParse(&hijack_context, &vstate, words, num_words,
+                                  setHeader, ProcessInstruction, pDiagnostic))
     return error;
 
   if (vstate.in_function_body())
@@ -243,7 +256,7 @@ spv_result_t spvValidate(const spv_const_context context,
 
   position.index = SPV_INDEX_INSTRUCTION;
   return spvValidateIDs(instructions.data(), instructions.size(),
-                        context->opcode_table, context->operand_table,
-                        context->ext_inst_table, vstate, &position,
-                        pDiagnostic);
+                        hijack_context.opcode_table,
+                        hijack_context.operand_table,
+                        hijack_context.ext_inst_table, vstate, &position);
 }

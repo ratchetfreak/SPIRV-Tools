@@ -13,6 +13,7 @@
 # limitations under the License.
 add_library(SPIRV-Tools-opt
   basic_block.h
+  build_module.h
   constants.h
   def_use_manager.h
   eliminate_dead_constant_pass.h
@@ -22,18 +23,21 @@ add_library(SPIRV-Tools-opt
   instruction.h
   ir_loader.h
   libspirv.hpp
+  log.h
   module.h
   null_pass.h
   reflect.h
   pass.h
   passes.h
   pass_manager.h
+  set_spec_constant_default_value_pass.h
   strip_debug_info_pass.h
   types.h
   type_manager.h
   unify_const_pass.h
   var2reg_pass.h
 
+  build_module.cpp
   def_use_manager.cpp
   eliminate_dead_constant_pass.cpp
   function.cpp
@@ -43,6 +47,7 @@ add_library(SPIRV-Tools-opt
   ir_loader.cpp
   libspirv.cpp
   module.cpp
+  set_spec_constant_default_value_pass.cpp
   strip_debug_info_pass.cpp
   types.cpp
   type_manager.cpp

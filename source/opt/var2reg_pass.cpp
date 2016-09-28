@@ -1,4 +1,4 @@
-// Copyright (c) 2016 Google Inc.
+// Copyright (c) 2016 The Khronos Group Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -91,7 +91,8 @@ namespace opt {
   }
 
   bool Mem2RegPass::Process(ir::Module* module) {
-    analysis::DefUseManager def_use(module);
+    MessageConsumer cons;
+    analysis::DefUseManager def_use(cons, module);
 
 
     bool modified = false;
